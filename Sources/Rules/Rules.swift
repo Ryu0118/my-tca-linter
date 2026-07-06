@@ -5,4 +5,5 @@ import SwiftSyntax
 public let rules = RuleSet {
     tcaBindingAntiPatternRule
     tcaViewStoreSendRule
+    tcaStateProgressiveBoolRule
 }
