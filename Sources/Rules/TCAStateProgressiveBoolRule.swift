@@ -35,9 +35,11 @@ let tcaStateProgressiveBoolRule = Rule(id: "tca-state-progressive-bool") { file,
     visitor.walk(file)
 }
 
-/// ファイル内で`@Reducer`付き、または`Reducer`/`ReducerProtocol`に準拠して宣言された型の名前を集める。
-/// `extension Foo { struct State { ... } }` の`Foo`がReducerかどうかを、SwiftSyntaxが行えない
-/// 意味論的な型解決に頼らず、同一ファイル内の名前照合だけで判定するために使う。
+/// Collects the names of types declared in the file that are either `@Reducer`-attributed or
+/// conform to `Reducer`/`ReducerProtocol`.
+/// Used to determine whether the `Foo` in `extension Foo { struct State { ... } }` is a Reducer
+/// via name matching within the same file, rather than relying on semantic type resolution,
+/// which SwiftSyntax cannot perform.
 private enum ReducerTypeNameCollector {
     static func collect(from file: SourceFileSyntax) -> Set<String> {
         let visitor = Visitor()
@@ -127,10 +129,12 @@ private final class StateProgressiveBoolVisitor: SyntaxVisitor {
         return isNestedInReducer(node)
     }
 
-    /// 祖先を遡り、Reducer型（@Reducer付き、またはReducer/ReducerProtocol準拠）の中に
-    /// 宣言されたStateかどうかを判定する。extension内の場合は、拡張対象の型名が
-    /// ファイル内でReducer型として集められた名前と一致するかで判定する
-    /// （extensionはファイルスコープ内で完結する言語仕様上、この名前照合で意味論的に正しい）。
+    /// Walks up the ancestors to determine whether this `State` is declared inside a Reducer
+    /// type (`@Reducer`-attributed, or conforming to `Reducer`/`ReducerProtocol`). When declared
+    /// inside an extension, this is determined by matching the extended type's name against the
+    /// set of names collected as Reducer types within the file (this name matching is
+    /// semantically correct because extensions are resolved within file scope per the language
+    /// spec).
     private func isNestedInReducer(_ node: StructDeclSyntax) -> Bool {
         var current = node.parent
         while let syntax = current {
@@ -172,16 +176,17 @@ private final class StateProgressiveBoolVisitor: SyntaxVisitor {
         }
     }
 
-    /// `is` + 大文字開始の1語 + `ing` 終わり（isLoading / isEditing / ...）のみを進行形と判定する。
-    /// `hasPrefix("is")` と `hasSuffix("ing")` が両立する時点で5文字以上が保証されるため、
-    /// 3文字目（index 2）へのアクセスは範囲外にならない。
+    /// Treats only `is` + a capitalized word + `ing` suffix (isLoading / isEditing / ...) as
+    /// progressive form. Once both `hasPrefix("is")` and `hasSuffix("ing")` hold, the string is
+    /// guaranteed to be at least 5 characters long, so accessing the third character (index 2)
+    /// never goes out of bounds.
     private func isProgressiveBoolName(_ name: String) -> Bool {
         guard name.hasPrefix("is"), name.hasSuffix("ing") else { return false }
         let thirdCharacter = name[name.index(name.startIndex, offsetBy: 2)]
         return thirdCharacter.isUppercase
     }
 
-    /// accessorが無い、またはwillSet/didSetのみならstored。get/setを持つならcomputed。
+    /// Stored if there is no accessor, or only willSet/didSet. Computed if it has a getter.
     private func isStored(_ binding: PatternBindingSyntax) -> Bool {
         guard let accessorBlock = binding.accessorBlock else { return true }
         switch accessorBlock.accessors {
@@ -195,7 +200,8 @@ private final class StateProgressiveBoolVisitor: SyntaxVisitor {
         }
     }
 
-    /// 型注釈が `Bool` / `Bool?` / `Optional<Bool>`、または注釈なしでBoolリテラル初期化ならBool型とみなす。
+    /// Considered Bool-typed if the type annotation is `Bool` / `Bool?` / `Optional<Bool>`, or if
+    /// there is no annotation but the initializer is a Bool literal.
     private func isBoolTyped(_ binding: PatternBindingSyntax) -> Bool {
         if let annotation = binding.typeAnnotation {
             let typeText = annotation.type.trimmedDescription
