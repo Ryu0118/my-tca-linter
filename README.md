@@ -100,7 +100,7 @@ Sending to a genuinely different destination is legitimate and is not flagged:
 - `.send(.delegate(...))` — a child-to-parent delegate notification.
 - `.send(.child(...))` where `child` is scoped to another Reducer via `Scope`, `.ifLet`, or `.forEach` in the same `body` — a parent-to-child action forward.
 
-To avoid false positives, a violation is only reported when there is positive evidence that the sent case is a sibling case of the same Reducer's own `Action` — either it's declared in a nested `Action` enum, or matched by a `case .caseName` pattern in the same `Reduce` switch. When this can't be determined, nothing is reported.
+To avoid false positives, a violation is only reported when there is positive evidence that the sent case is a sibling case of the same Reducer's own `Action` — either it's declared in a nested `Action` enum, or matched by a `case .caseName` pattern in the same `Reduce` switch. When this can't be determined, nothing is reported. Only a directly-returned `.send(...)` is inspected; a send wrapped in a combinator (e.g. `return .merge(.send(.a), .send(.b))`) is not unwrapped and is not flagged.
 
 ```swift
 // ❌ error

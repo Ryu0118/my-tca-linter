@@ -161,6 +161,78 @@ struct TCANoActionAsFunctionRuleTests {
         #expect(diagnostics.count == 1)
     }
 
+    @Test("error is reported exactly once for a violation inside a nested Reducer struct, and not attributed to the outer Reducer")
+    func detectsNestedReducerViolationOnceWithoutCrossContamination() async {
+        let source = """
+        @Reducer
+        struct ParentReducer {
+            @Reducer
+            struct ChildReducer {
+                struct State: Equatable {}
+                enum Action {
+                    case a
+                    case b
+                }
+
+                var body: some ReducerOf<Self> {
+                    Reduce { state, action in
+                        switch action {
+                        case .a:
+                            return .send(.b)
+                        case .b:
+                            return .none
+                        }
+                    }
+                }
+            }
+
+            struct State: Equatable {}
+            enum Action {
+                case x
+            }
+
+            var body: some ReducerOf<Self> {
+                EmptyReducer()
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("no error when the outer Reducer sends a case name that only exists on a nested Reducer's Action")
+    func ignoresNameCollisionWithNestedReducerAction() async {
+        let source = """
+        @Reducer
+        struct ParentReducer {
+            @Reducer
+            struct ChildReducer {
+                enum Action {
+                    case shared
+                }
+                var body: some ReducerOf<Self> {
+                    Reduce { state, action in .none }
+                }
+            }
+
+            enum Action {
+                case someAction
+            }
+
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    switch action {
+                    case .someAction:
+                        return .send(.shared)
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.isEmpty)
+    }
+
     // MARK: - Non-violation tests
 
     @Test("no error for .send(.delegate(...)) — delegate notification is always allowed")
@@ -422,6 +494,36 @@ struct TCANoActionAsFunctionRuleTests {
         """
         let diagnostics = await rule.lint(source: source)
         #expect(diagnostics.count == 1)
+    }
+
+    @Test(
+        "no error when a same-Reducer send is wrapped in .merge(...) (documented false-negative: the rule only inspects a directly-returned .send(...), not combinators wrapping it)"
+    )
+    func ignoresSameReducerSendWrappedInMerge() async {
+        let source = """
+        @Reducer
+        struct SomeReducer {
+            struct State: Equatable {}
+            enum Action {
+                case someAction
+                case updateState
+                case logAnalytics
+            }
+
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    switch action {
+                    case .someAction:
+                        return .merge(.send(.updateState), .send(.logAnalytics))
+                    case .updateState, .logAnalytics:
+                        return .none
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.isEmpty)
     }
 
     @Test("no error for empty file")

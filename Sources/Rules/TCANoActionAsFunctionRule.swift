@@ -71,6 +71,15 @@ private final class ReducerTypeVisitor: SyntaxVisitor {
         return .visitChildren
     }
 
+    // Note: this outer visitor intentionally keeps descending (`.visitChildren`) after analyzing
+    // a Reducer type, so that a nested Reducer type (e.g. a private helper Reducer struct
+    // declared inside another Reducer) is discovered and analyzed independently as its own
+    // top-level Reducer. To avoid double-reporting the nested Reducer's own violations and to
+    // avoid cross-contaminating the outer Reducer's collected Action case / scoped-child name
+    // sets with the nested Reducer's names, the inner collectors/visitors below
+    // (`ScopedChildActionCollector`, `ActionCaseCollector`, `ReduceClosureVisitor`) each stop
+    // descending at a nested `struct`/`class` type declaration boundary.
+
     // MARK: - Helpers
 
     /// Returns true when the type looks like a TCA Reducer: `@Reducer` attribute, explicit
@@ -136,6 +145,14 @@ private final class ScopedChildActionCollector: SyntaxVisitor {
         super.init(viewMode: .sourceAccurate)
     }
 
+    // Stop at a nested type declaration boundary: a nested Reducer (e.g. a private helper
+    // Reducer `struct`/`class` declared inside another Reducer) is discovered and analyzed
+    // independently by the outer `ReducerTypeVisitor`, so its `Scope`/`.ifLet`/`.forEach` calls
+    // must not be attributed to the enclosing Reducer here (that would both double-count and
+    // risk cross-contaminating unrelated Reducers' scoped-child name sets).
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
+    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
+
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
         let calleeName = calleeBaseName(node.calledExpression)
         guard ["Scope", "ifLet", "forEach", "ifCaseLet"].contains(calleeName) else {
@@ -183,6 +200,12 @@ private final class ActionCaseCollector: SyntaxVisitor {
     init() {
         super.init(viewMode: .sourceAccurate)
     }
+
+    // Stop at a nested type declaration boundary: a nested Reducer's own `Action` enum and
+    // `switch action` statements must not be attributed to the enclosing Reducer (see the
+    // matching note on `ScopedChildActionCollector`).
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
+    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
 
     override func visit(_ node: EnumDeclSyntax) -> SyntaxVisitorContinueKind {
         guard node.name.text == "Action" else { return .visitChildren }
@@ -237,6 +260,14 @@ private final class ReduceClosureVisitor: SyntaxVisitor {
         self.actionCaseNames = actionCaseNames
         super.init(viewMode: .sourceAccurate)
     }
+
+    // Stop at a nested type declaration boundary: a nested Reducer's own `Reduce { ... }` is
+    // discovered and analyzed independently by the outer `ReducerTypeVisitor` when it reaches
+    // that nested type directly, so it must not also be processed (and double-reported) here as
+    // part of the enclosing Reducer's analysis (see the matching note on
+    // `ScopedChildActionCollector`).
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
+    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
 
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
         guard isReduceCall(node), let closure = trailingClosure(node) else {
