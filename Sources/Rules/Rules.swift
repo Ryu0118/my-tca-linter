@@ -6,4 +6,5 @@ public let rules = RuleSet {
     tcaBindingAntiPatternRule
     tcaViewStoreSendRule
     tcaNoActionAsFunctionRule
+    tcaStateProgressiveBoolRule
 }
