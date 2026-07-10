@@ -36,6 +36,7 @@ swift build -c release
 |---------|----------|-------------|
 | `tca-binding-anti-pattern` | error | Flags `Binding(get:set:)` whose `set:` closure calls `send()` or `store.send()` in a TCA View |
 | `tca-view-store-send` | error | Flags direct `store.send(...)` calls inside TCA Views |
+| `tca-no-action-as-function` | error | Flags `return .send(...)` used to call another case of the same Reducer's `Action` as if it were a function |
 
 ### tca-binding-anti-pattern
 
@@ -89,6 +90,39 @@ struct CounterView: View {
         }
     }
 }
+```
+
+### tca-no-action-as-function
+
+In TCA, `Action` represents a state transition, not a callable function. Returning `.send(...)` from one `case` of a `Reduce` to trigger another `case` of the *same* Reducer is an anti-pattern — it turns the action log into noise for what is really a plain function call.
+
+Sending to a genuinely different destination is legitimate and is not flagged:
+- `.send(.delegate(...))` — a child-to-parent delegate notification.
+- `.send(.child(...))` where `child` is scoped to another Reducer via `Scope`, `.ifLet`, or `.forEach` in the same `body` — a parent-to-child action forward.
+
+To avoid false positives, a violation is only reported when there is positive evidence that the sent case is a sibling case of the same Reducer's own `Action` — either it's declared in a nested `Action` enum, or matched by a `case .caseName` pattern in the same `Reduce` switch. When this can't be determined, nothing is reported. Only a directly-returned `.send(...)` is inspected; a send wrapped in a combinator (e.g. `return .merge(.send(.a), .send(.b))`) is not unwrapped and is not flagged.
+
+```swift
+// ❌ error
+case .someAction:
+    return .send(.internal(.updateState))
+
+case .internal(.updateState):
+    state.value = newValue
+    return .none
+
+// ✅
+case .someAction:
+    state.value = newValue
+    return .none
+
+// ✅ forwarding to a Scoped child Reducer
+case .someButtonTapped:
+    return .send(.timeline(.refresh))
+
+// ✅ delegate notification to the parent
+case .closeButtonTapped:
+    return .send(.delegate(.didClose))
 ```
 
 ## Usage
