@@ -37,6 +37,7 @@ swift build -c release
 | `tca-binding-anti-pattern` | error | Flags `Binding(get:set:)` whose `set:` closure calls `send()` or `store.send()` in a TCA View |
 | `tca-view-store-send` | error | Flags direct `store.send(...)` calls inside TCA Views |
 | `tca-no-action-as-function` | error | Flags `return .send(...)` used to call another case of the same Reducer's `Action` as if it were a function |
+| `tca-view-reducer-same-file` | error | Flags a single file that declares both a SwiftUI `View` and a TCA Reducer |
 
 ### tca-binding-anti-pattern
 
@@ -123,6 +124,44 @@ case .someButtonTapped:
 // ✅ delegate notification to the parent
 case .closeButtonTapped:
     return .send(.delegate(.didClose))
+```
+
+### tca-view-reducer-same-file
+
+The TCA architecture convention keeps a feature's View and its Reducer in separate files (`FooView.swift` / `FooReducer.swift`). Co-locating them couples the UI and the state machine and lets the file grow into a hard-to-navigate blob. When a single file declares both, a diagnostic is reported on **each** Reducer declaration.
+
+**A View is:**
+- `struct X: View` / `class X: View` — exact `View` conformance
+- `extension X: View` — an extension adding `View` conformance
+
+`View` is matched by exact token equality, so `ViewModifier`, a type merely *named* `FooView` without conformance, and custom `SomethingView` protocols are **not** treated as Views.
+
+**A Reducer is:** a type with the `@Reducer` attribute, a type conforming to `Reducer`/`ReducerProtocol`, or an `extension` adding such conformance.
+
+Files with only Views, or only Reducers — no matter how many, including a parent `@Reducer` with a nested `@Reducer enum Destination`/`Path` — are not flagged.
+
+```swift
+// ❌ error — FooView.swift declares both
+struct FooView: View {
+    var body: some View { ... }
+}
+
+@Reducer
+struct FooReducer {
+    // ...
+}
+
+// ✅ split across two files
+// FooView.swift
+struct FooView: View {
+    var body: some View { ... }
+}
+
+// FooReducer.swift
+@Reducer
+struct FooReducer {
+    // ...
+}
 ```
 
 ## Usage
