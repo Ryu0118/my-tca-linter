@@ -15,9 +15,11 @@ import SwiftSyntax
 /// unrelated helper type is out of scope and not flagged.
 ///
 /// A *dependency call site* is a function call whose immediate receiver is an identifier whose name
-/// ends with `Client` or `UseCase` (e.g. `userClient.fetch()`, `self.authUseCase.login()`). Calls to
-/// `send(...)`, `clock.sleep(...)`, `Task.sleep(...)`, and the `.run` call itself are not dependency
-/// calls. Each distinct call expression counts once, so a call inside a `for`/`while` loop or a
+/// ends with `Client` or `UseCase` (e.g. `userClient.fetch()`, `self.authUseCase.login()`), or a
+/// direct-callable dependency (`userClient(...)`, the `callAsFunction` form of a `@DependencyClient`
+/// closure; a lowercase first letter is required so initializer calls like `APIClient()` are not
+/// counted). Calls to `send(...)`, `clock.sleep(...)`, `Task.sleep(...)`, and the `.run` call itself
+/// are not dependency calls. Each distinct call expression counts once, so a call inside a `for`/`while` loop or a
 /// `for await x in client.stream()` sequence is a single site. Nested closures within the same `.run`
 /// (`Result { }`, `withTaskGroup { }`, ...) are inspected, but a nested `.run` is analyzed
 /// independently as its own effect.
@@ -97,21 +99,27 @@ private enum ReducerTypeNameCollector {
     }
 }
 
+private let reducerConformanceNames: Set<String> = [
+    "Reducer",
+    "ReducerProtocol",
+    "ComposableArchitecture.Reducer",
+    "ComposableArchitecture.ReducerProtocol",
+]
+
 private func isReducerTypeDeclaration(
     attributes: AttributeListSyntax,
     inheritance: InheritanceClauseSyntax?
 ) -> Bool {
     if attributes.contains(where: { attribute in
-        attribute.as(AttributeSyntax.self)?
-            .attributeName.as(IdentifierTypeSyntax.self)?
-            .name.text == "Reducer"
+        guard let name = attribute.as(AttributeSyntax.self)?.attributeName.trimmedDescription
+        else { return false }
+        return name == "Reducer" || name == "ComposableArchitecture.Reducer"
     }) {
         return true
     }
     guard let inheritance else { return false }
     return inheritance.inheritedTypes.contains { inherited in
-        let name = inherited.type.trimmedDescription
-        return name == "Reducer" || name == "ReducerProtocol"
+        reducerConformanceNames.contains(inherited.type.trimmedDescription)
     }
 }
 
@@ -163,17 +171,31 @@ private final class RunEffectVisitor: SyntaxVisitor {
               member.declName.baseName.text == "run"
         else { return false }
         guard let base = member.base else { return true }
-        return base.as(DeclReferenceExprSyntax.self)?.baseName.text == "Effect"
+        // `Effect.run` and the module-qualified `ComposableArchitecture.Effect.run`.
+        if let reference = base.as(DeclReferenceExprSyntax.self) {
+            return reference.baseName.text == "Effect"
+        }
+        if let baseMember = base.as(MemberAccessExprSyntax.self) {
+            return baseMember.declName.baseName.text == "Effect"
+        }
+        return false
     }
 
     /// Walks ancestors to determine whether this `.run` call is inside a Reducer type: a
-    /// `@Reducer`/conformance type declaration, or an `extension` of a type collected as a Reducer
-    /// within the same file.
+    /// `@Reducer`/conformance type declaration, an `extension` of a type collected as a Reducer
+    /// within the same file, or an `extension` that itself declares the Reducer conformance
+    /// (`extension Foo: Reducer { ... }`).
     private func isInsideReducer(_ node: FunctionCallExprSyntax) -> Bool {
         var current = node.parent
         while let syntax = current {
             if let extensionDecl = syntax.as(ExtensionDeclSyntax.self) {
                 if reducerTypeNames.contains(extensionDecl.extendedType.trimmedDescription) {
+                    return true
+                }
+                if isReducerTypeDeclaration(
+                    attributes: extensionDecl.attributes,
+                    inheritance: extensionDecl.inheritanceClause
+                ) {
                     return true
                 }
             } else if let group = syntax.asProtocol(DeclGroupSyntax.self) {
@@ -216,19 +238,36 @@ private final class DependencyCallCollector: SyntaxVisitor {
               member.declName.baseName.text == "run"
         else { return false }
         guard let base = member.base else { return true }
-        return base.as(DeclReferenceExprSyntax.self)?.baseName.text == "Effect"
+        // `Effect.run` and the module-qualified `ComposableArchitecture.Effect.run`.
+        if let reference = base.as(DeclReferenceExprSyntax.self) {
+            return reference.baseName.text == "Effect"
+        }
+        if let baseMember = base.as(MemberAccessExprSyntax.self) {
+            return baseMember.declName.baseName.text == "Effect"
+        }
+        return false
     }
 
-    /// A dependency call is a member-access call (`receiver.method(...)`) whose immediate receiver is
-    /// an identifier (or the trailing member of a chain) whose name ends with `Client` or `UseCase`.
-    /// `self.userClient.fetch()` → receiver `userClient`. `self.userClient.session.fetch()` →
-    /// receiver `session`, not counted.
+    /// A dependency call is either a member-access call (`receiver.method(...)`) whose immediate
+    /// receiver is an identifier (or the trailing member of a chain) whose name ends with `Client`
+    /// or `UseCase`, or a direct-callable dependency (`userClient(...)`, the `callAsFunction` form
+    /// of a `@DependencyClient` closure). `self.userClient.fetch()` → receiver `userClient`.
+    /// `self.userClient.session.fetch()` → receiver `session`, not counted. Direct calls require a
+    /// lowercase first letter so that type initializer calls (`APIClient()`) are not counted.
     private func isDependencyCall(_ node: FunctionCallExprSyntax) -> Bool {
+        if let reference = node.calledExpression.as(DeclReferenceExprSyntax.self) {
+            let name = reference.baseName.text
+            return name.first?.isLowercase == true && hasDependencySuffix(name)
+        }
         guard let member = node.calledExpression.as(MemberAccessExprSyntax.self),
               let base = member.base,
               let receiverName = trailingIdentifier(of: base)
         else { return false }
-        return receiverName.hasSuffix("Client") || receiverName.hasSuffix("UseCase")
+        return hasDependencySuffix(receiverName)
+    }
+
+    private func hasDependencySuffix(_ name: String) -> Bool {
+        name.hasSuffix("Client") || name.hasSuffix("UseCase")
     }
 
     /// Returns the trailing identifier of a receiver expression: `userClient` → `userClient`,

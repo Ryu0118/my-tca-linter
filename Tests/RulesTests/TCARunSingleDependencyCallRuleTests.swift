@@ -394,4 +394,114 @@ struct TCARunSingleDependencyCallRuleTests {
         let diagnostics = await rule.lint(source: source)
         #expect(diagnostics.isEmpty)
     }
+
+    // MARK: - Review-fix cases
+
+    @Test("violation inside `extension Foo: Reducer` declaring the conformance itself")
+    func detectsRunInsideConformanceExtension() async {
+        let source = """
+        import ComposableArchitecture
+
+        struct Foo {
+        }
+
+        extension Foo: Reducer {
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    return .run { send in
+                        let a = try await userClient.fetch()
+                        try await analyticsClient.track(a)
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("direct-callable dependency (`userClient(...)`) counts as a call site")
+    func detectsDirectCallableDependency() async {
+        let source = """
+        import ComposableArchitecture
+
+        @Reducer
+        struct MyReducer {
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    return .run { send in
+                        let a = try await userClient(.fetch)
+                        try await analyticsClient.track(a)
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("initializer call of a Client type (`APIClient()`) is not a dependency call")
+    func allowsClientInitializerCall() async {
+        // Type names start with an uppercase letter; a direct-callable dependency is a
+        // lowercase-named value. `APIClient()` constructs a value and is not counted.
+        let source = """
+        import ComposableArchitecture
+
+        @Reducer
+        struct MyReducer {
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    return .run { send in
+                        let client = APIClient()
+                        try await userClient.fetch()
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.isEmpty)
+    }
+
+    @Test("module-qualified `ComposableArchitecture.Effect.run` is recognized as a .run effect")
+    func detectsQualifiedEffectRun() async {
+        let source = """
+        import ComposableArchitecture
+
+        @Reducer
+        struct MyReducer {
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    return ComposableArchitecture.Effect.run { send in
+                        let a = try await userClient.fetch()
+                        try await analyticsClient.track(a)
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("module-qualified `ComposableArchitecture.Reducer` conformance is recognized")
+    func detectsQualifiedReducerConformance() async {
+        let source = """
+        import ComposableArchitecture
+
+        struct Foo: ComposableArchitecture.Reducer {
+            var body: some ReducerOf<Self> {
+                Reduce { state, action in
+                    return .run { send in
+                        let a = try await userClient.fetch()
+                        try await analyticsClient.track(a)
+                    }
+                }
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
 }
