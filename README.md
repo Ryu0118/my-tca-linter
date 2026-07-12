@@ -38,6 +38,7 @@ swift build -c release
 | `tca-view-store-send` | error | Flags direct `store.send(...)` calls inside TCA Views |
 | `tca-no-action-as-function` | error | Flags `return .send(...)` used to call another case of the same Reducer's `Action` as if it were a function |
 | `tca-view-reducer-same-file` | error | Flags a single file that declares both a SwiftUI `View` and a TCA Reducer |
+| `tca-run-single-dependency-call` | error | Flags a `.run` effect that performs more than one UseCase/Client call inside a TCA Reducer |
 
 ### tca-binding-anti-pattern
 
@@ -161,6 +162,25 @@ struct FooView: View {
 @Reducer
 struct FooReducer {
     // ...
+### tca-run-single-dependency-call
+
+A `.run` effect should orchestrate a *single* dependency call. Composing several UseCase/Client calls (fetch, then track, then sync, ...) inside the Reducer's effect leaks business logic into the Reducer — the composition, its ordering, and its error handling belong in a UseCase the Reducer calls once. Keeping `.run` down to one call keeps the Reducer a thin dispatcher and makes the composed behavior independently testable.
+
+Analyzed only inside types that look like a TCA Reducer (`@Reducer`-attributed, `Reducer`/`ReducerProtocol`-conforming, or an `extension` of such a type in the same file). A dependency call site is a call whose immediate receiver is an identifier ending in `Client` or `UseCase` (e.g. `userClient.fetch()`, `self.authUseCase.login()`). Calls to `send(...)`, `clock.sleep(...)`, `Task.sleep(...)`, and the `.run` call itself are not dependency calls. Each distinct call expression counts once, so a call inside a loop or a `for await x in client.stream()` sequence is a single site. Nested closures within the same `.run` (`Result { }`, `withTaskGroup { }`, ...) are inspected, but a nested `.run` is analyzed independently. When a single `.run` contains two or more dependency call sites, the second and each subsequent site is flagged.
+
+**Known limitation:** detection is name-based on the `Client`/`UseCase` suffix. A dependency not following this convention is not detected (a false negative), which is the safe direction — this linter prefers missed detections over false positives.
+
+```swift
+// ❌ error
+return .run { send in
+    let user = try await userClient.fetch()
+    try await analyticsClient.track(user)  // second dependency call in one .run
+}
+
+// ✅ compose the calls inside a UseCase
+return .run { send in
+    let user = try await profileUseCase.loadAndTrack()
+    await send(.loaded(user))
 }
 ```
 
