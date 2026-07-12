@@ -113,32 +113,41 @@ private final class ViewReducerCollector: SyntaxVisitor {
     }
 }
 
-/// A View is identified by exact `View` token equality in the inheritance clause. Substring
-/// matching would wrongly catch `ViewModifier` and custom `SomethingView` protocols, so equality
-/// is required.
+/// A View is identified by exact `View` (or module-qualified `SwiftUI.View`) token equality in the
+/// inheritance clause. Substring matching would wrongly catch `ViewModifier` and custom
+/// `SomethingView` protocols, so equality is required.
 private func isViewType(inheritance: InheritanceClauseSyntax?) -> Bool {
     guard let inheritance else { return false }
-    return inheritance.inheritedTypes.contains { $0.type.trimmedDescription == "View" }
+    return inheritance.inheritedTypes.contains { inherited in
+        let name = inherited.type.trimmedDescription
+        return name == "View" || name == "SwiftUI.View"
+    }
 }
+
+private let reducerConformanceNames: Set<String> = [
+    "Reducer",
+    "ReducerProtocol",
+    "ComposableArchitecture.Reducer",
+    "ComposableArchitecture.ReducerProtocol",
+]
 
 private func isReducerType(
     attributes: AttributeListSyntax,
     inheritance: InheritanceClauseSyntax?
 ) -> Bool {
-    if hasAttribute(attributes, named: "Reducer") {
+    if hasReducerAttribute(attributes) {
         return true
     }
     guard let inheritance else { return false }
     return inheritance.inheritedTypes.contains { inherited in
-        let name = inherited.type.trimmedDescription
-        return name == "Reducer" || name == "ReducerProtocol"
+        reducerConformanceNames.contains(inherited.type.trimmedDescription)
     }
 }
 
-private func hasAttribute(_ attributes: AttributeListSyntax, named name: String) -> Bool {
+private func hasReducerAttribute(_ attributes: AttributeListSyntax) -> Bool {
     attributes.contains { attribute in
-        attribute.as(AttributeSyntax.self)?
-            .attributeName.as(IdentifierTypeSyntax.self)?
-            .name.text == name
+        guard let name = attribute.as(AttributeSyntax.self)?.attributeName.trimmedDescription
+        else { return false }
+        return name == "Reducer" || name == "ComposableArchitecture.Reducer"
     }
 }

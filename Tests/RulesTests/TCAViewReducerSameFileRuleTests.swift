@@ -192,6 +192,59 @@ struct TCAViewReducerSameFileRuleTests {
         #expect(diagnostics.count == 1)
     }
 
+    @Test("error for module-qualified `SwiftUI.View` conformance plus a Reducer")
+    func detectsQualifiedViewConformance() async {
+        let source = """
+        import ComposableArchitecture
+        import SwiftUI
+
+        struct FooView: SwiftUI.View {
+            var body: some View { EmptyView() }
+        }
+
+        @Reducer
+        struct FooReducer {
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("error for module-qualified `ComposableArchitecture.Reducer` conformance plus a View")
+    func detectsQualifiedReducerConformance() async {
+        let source = """
+        import ComposableArchitecture
+        import SwiftUI
+
+        struct FooView: View {
+            var body: some View { EmptyView() }
+        }
+
+        struct Foo: ComposableArchitecture.Reducer {
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("error for module-qualified `@ComposableArchitecture.Reducer` attribute plus a View")
+    func detectsQualifiedReducerAttribute() async {
+        let source = """
+        import ComposableArchitecture
+        import SwiftUI
+
+        struct FooView: View {
+            var body: some View { EmptyView() }
+        }
+
+        @ComposableArchitecture.Reducer
+        struct FooReducer {
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
     // MARK: - Non-violation tests
 
     @Test("no error for a file with only Views, including helper subviews")
