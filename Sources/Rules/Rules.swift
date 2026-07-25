@@ -9,4 +9,5 @@ public let rules = RuleSet {
     tcaStateProgressiveBoolRule
     tcaViewReducerSameFileRule
     tcaRunSingleDependencyCallRule
+    tcaActionCaseConventionRule
 }
