@@ -62,11 +62,11 @@ struct TCAActionCaseConventionArguments: Codable, Sendable {
 /// A case with **no** associated value, or with **more than one**, is always a violation: neither
 /// shape can be a scope, a presentation or a binding.
 ///
-/// The rule only inspects an enum literally named `Action` that is nested inside a Reducer type
-/// (`@Reducer`-attributed, `Reducer`/`ReducerProtocol`-conforming, or an `extension` of such a type
-/// declared in the same file). The nested `ViewAction` / `InternalAction` / `DelegateAction` enums,
-/// `@Reducer enum Destination`-style enum Reducers, and any `Action` enum outside a Reducer are
-/// left alone.
+/// The rule only inspects an enum literally named `Action` whose immediate enclosing declaration
+/// is a Reducer (`@Reducer`-attributed, `Reducer`/`ReducerProtocol`-conforming) or a Reducer
+/// extension. The nested `ViewAction` / `InternalAction` / `DelegateAction` enums,
+/// `Action` enums in helper types nested inside a Reducer, `@Reducer enum Destination`-style enum
+/// Reducers, and any `Action` enum outside a Reducer are left alone.
 ///
 /// **Bad**
 /// ```swift
@@ -125,7 +125,8 @@ private let scopeGenericTypeNames: Set<String> = [
 /// conform to `Reducer`/`ReducerProtocol`.
 /// Used to determine whether the `Foo` in `extension Foo { enum Action { ... } }` is a Reducer via
 /// name matching within the same file, rather than relying on semantic type resolution, which
-/// SwiftSyntax cannot perform.
+/// SwiftSyntax cannot perform. An extension that declares the conformance itself is handled
+/// directly by ``ActionCaseConventionVisitor``.
 private enum ReducerTypeNameCollector {
     static func collect(from file: SourceFileSyntax) -> Set<String> {
         let visitor = Visitor()
@@ -166,6 +167,13 @@ private enum ReducerTypeNameCollector {
     }
 }
 
+private let reducerConformanceNames: Set<String> = [
+    "Reducer",
+    "ReducerProtocol",
+    "ComposableArchitecture.Reducer",
+    "ComposableArchitecture.ReducerProtocol",
+]
+
 private func isReducerTypeDeclaration(
     attributes: AttributeListSyntax,
     inheritance: InheritanceClauseSyntax?
@@ -175,16 +183,16 @@ private func isReducerTypeDeclaration(
     }
     guard let inheritance else { return false }
     return inheritance.inheritedTypes.contains { inherited in
-        let name = inherited.type.trimmedDescription
-        return name == "Reducer" || name == "ReducerProtocol"
+        reducerConformanceNames.contains(inherited.type.trimmedDescription)
     }
 }
 
 private func hasReducerAttribute(_ attributes: AttributeListSyntax) -> Bool {
     attributes.contains { attribute in
-        attribute.as(AttributeSyntax.self)?
-            .attributeName.as(IdentifierTypeSyntax.self)?
-            .name.text == "Reducer"
+        guard let name = attribute.as(AttributeSyntax.self)?.attributeName.trimmedDescription else {
+            return false
+        }
+        return name == "Reducer" || name == "ComposableArchitecture.Reducer"
     }
 }
 
@@ -208,7 +216,7 @@ private final class ActionCaseConventionVisitor: SyntaxVisitor {
     }
 
     override func visit(_ node: EnumDeclSyntax) -> SyntaxVisitorContinueKind {
-        guard node.name.text == "Action", isNestedInReducer(node) else { return .visitChildren }
+        guard node.name.text == "Action", isRootAction(node) else { return .visitChildren }
         for member in node.memberBlock.members {
             guard let caseDecl = member.decl.as(EnumCaseDeclSyntax.self) else { continue }
             for element in caseDecl.elements {
@@ -218,26 +226,27 @@ private final class ActionCaseConventionVisitor: SyntaxVisitor {
         return .visitChildren
     }
 
-    /// Walks up the ancestors to determine whether this `Action` is declared inside a Reducer type.
-    /// When declared inside an extension, this is determined by matching the extended type's name
-    /// against the set of names collected as Reducer types within the file (this name matching is
-    /// semantically correct because extensions are resolved within file scope per the language
-    /// spec).
-    private func isNestedInReducer(_ node: EnumDeclSyntax) -> Bool {
+    /// Returns true only when the first enclosing declaration is a Reducer type or a Reducer
+    /// extension. Stopping at that first declaration prevents an unrelated helper's `Action` from
+    /// being mistaken for the outer Reducer's root `Action`.
+    private func isRootAction(_ node: EnumDeclSyntax) -> Bool {
         var current = node.parent
         while let syntax = current {
             if let extensionDecl = syntax.as(ExtensionDeclSyntax.self) {
-                if reducerTypeNames.contains(extensionDecl.extendedType.trimmedDescription) {
-                    return true
-                }
+                return isReducerExtension(extensionDecl)
             } else if let group = syntax.asProtocol(DeclGroupSyntax.self) {
-                if isReducerTypeDeclaration(attributes: group.attributes, inheritance: group.inheritanceClause) {
-                    return true
-                }
+                return isReducerTypeDeclaration(attributes: group.attributes, inheritance: group.inheritanceClause)
             }
             current = syntax.parent
         }
         return false
+    }
+
+    /// Recognizes both an extension of a Reducer declared in the same file and an extension that
+    /// adds the Reducer conformance itself.
+    private func isReducerExtension(_ node: ExtensionDeclSyntax) -> Bool {
+        reducerTypeNames.contains(node.extendedType.trimmedDescription)
+            || isReducerTypeDeclaration(attributes: node.attributes, inheritance: node.inheritanceClause)
     }
 
     private func check(_ element: EnumCaseElementSyntax) {

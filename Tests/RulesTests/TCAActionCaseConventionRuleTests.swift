@@ -166,6 +166,45 @@ struct TCAActionCaseConventionRuleViolationTests {
         #expect(diagnostics.count == 1)
     }
 
+    @Test("error for an Action declared in an extension that adds Reducer conformance")
+    func detectsActionInReducerConformanceExtension() async {
+        let source = """
+        import ComposableArchitecture
+
+        struct MyReducer {}
+
+        extension MyReducer: Reducer {
+            enum Action {
+                case dismiss
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 1)
+    }
+
+    @Test("error for qualified Reducer attributes and conformances")
+    func detectsQualifiedReducerDeclarations() async {
+        let source = """
+        import ComposableArchitecture
+
+        @ComposableArchitecture.Reducer
+        struct MacroReducer {
+            enum Action {
+                case dismiss
+            }
+        }
+
+        struct ProtocolReducer: ComposableArchitecture.Reducer {
+            enum Action {
+                case dismiss
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.count == 2)
+    }
+
     @Test("diagnostic message names the offending case")
     func messageNamesCase() async {
         let source = """
@@ -380,6 +419,24 @@ struct TCAActionCaseConventionRuleScopeAndConfigTests {
         struct GameEngine {
             enum Action {
                 case tick
+            }
+        }
+        """
+        let diagnostics = await rule.lint(source: source)
+        #expect(diagnostics.isEmpty)
+    }
+
+    @Test("no error for an Action enum nested in a helper type inside a Reducer")
+    func ignoresActionInNestedHelperType() async {
+        let source = """
+        import ComposableArchitecture
+
+        @Reducer
+        struct MyReducer {
+            struct Helper {
+                enum Action {
+                    case tick
+                }
             }
         }
         """
