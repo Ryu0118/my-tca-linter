@@ -39,6 +39,7 @@ swift build -c release
 | `tca-no-action-as-function` | error | Flags `return .send(...)` used to call another case of the same Reducer's `Action` as if it were a function |
 | `tca-view-reducer-same-file` | error | Flags a single file that declares both a SwiftUI `View` and a TCA Reducer |
 | `tca-run-single-dependency-call` | error | Flags a `.run` effect that performs more than one UseCase/Client call inside a TCA Reducer |
+| `tca-action-case-convention` | error | Flags root Reducer `Action` cases that are neither a category (`view`/`internalAction`/`delegate`), a child Reducer scope, a presentation, nor the `BindableAction` binding requirement |
 
 ### tca-binding-anti-pattern
 
@@ -182,6 +183,52 @@ return .run { send in
     let user = try await profileUseCase.loadAndTrack()
     await send(.loaded(user))
 }
+```
+
+### tca-action-case-convention
+
+A root Reducer `Action` should be a router, not a place to accumulate domain events directly. Every event belongs to one of three categories, each declared in its own nested enum: `view` (user intent), `internalAction` (effect results and other self-directed events) and `delegate` (notifications to the parent). A case declared straight on the root `Action` — instead of inside one of these three nested enums — breaks that split and makes the action log ambiguous about who sent what.
+
+A case on the root `Action` is allowed when any of the following holds:
+
+1. **Category** — the case name is one of `category_case_names` (default `view` / `internalAction` / `delegate`) and it has exactly one associated value.
+2. **Child Reducer scope** — its single associated value is a `Foo.Action`, an `IdentifiedAction<...>` / `IdentifiedActionOf<...>`, or a `StackAction<...>` / `StackActionOf<...>`.
+3. **Presentation** — its single associated value is a `PresentationAction<...>`. Both a scoped child Reducer (`PresentationAction<Destination.Action>`) and a plain, non-Reducer enum driving `.ifLet(\.$alert, action:)` (`PresentationAction<Alert>`) are legitimate, so the wrapped type is deliberately not inspected further.
+4. **Binding** — its single associated value is a `BindingAction<...>`. `BindableAction` requires this case to live on the root `Action`, so it cannot be moved into a category enum.
+5. **Extra allowance** — the case name is listed in `additional_allowed_case_names`, an escape hatch for project-specific exceptions that cannot be expressed by a payload type.
+
+Only root Reducer `Action` enums are inspected (the nested `ViewAction` / `InternalAction` / `DelegateAction` enums, and `Action` enums that are not nested in a Reducer at all, are left alone).
+
+```swift
+// ❌ error — a domain event sitting directly on the root Action
+enum Action {
+    case view(ViewAction)
+    case internalAction(InternalAction)
+    case delegate(DelegateAction)
+    case fetchResponse(Result<[Item], any Error>)  // should live in InternalAction
+}
+
+// ✅ every non-scope, non-binding case lives in one of the three category enums
+enum Action: BindableAction {
+    case view(ViewAction)
+    case internalAction(InternalAction)
+    case delegate(DelegateAction)
+    case binding(BindingAction<State>)
+    case destination(PresentationAction<Destination.Action>)
+
+    enum ViewAction { case onAppear }
+    enum InternalAction { case fetchResponse(Result<[Item], any Error>) }
+    enum DelegateAction { case finished }
+}
+```
+
+Configure via YAML when a project spells the categories differently or needs project-specific exceptions:
+
+```yaml
+rules:
+  tca-action-case-convention:
+    category_case_names: ["view", "internal", "delegate"]
+    additional_allowed_case_names: ["legacy"]
 ```
 
 ## Usage
