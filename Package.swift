@@ -6,7 +6,7 @@ let package = Package(
     name: "my-tca-linter",
     platforms: [.macOS(.v15)],
     dependencies: [
-        .package(url: "https://github.com/Ryu0118/swift-ast-lint.git", from: "0.1.2"),
+        .package(url: "https://github.com/Ryu0118/swift-ast-lint.git", from: "0.3.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "600.0.0" ..< "700.0.0"),
     ],
     targets: [
