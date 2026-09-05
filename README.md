@@ -247,7 +247,7 @@ swift run --package-path /path/to/my-tca-linter swift-ast-lint /path/to/your/Sou
 
 ### Configure via YAML
 
-Place a `.swift-ast-lint.yml` in the root of your project:
+Place a `.my-tca-linter.yml` in the root of your project:
 
 ```yaml
 rules:
@@ -257,6 +257,9 @@ rules:
     exclude:
       - "**/*Generated.swift"
 ```
+
+> [!NOTE]
+> Prior to `0.5.0` the default config file was `.swift-ast-lint.yml`, shared with other `swift-ast-lint`-based linters (e.g. [my-swift-linter](https://github.com/Ryu0118/my-swift-linter)). If you have an existing `.swift-ast-lint.yml` written for `my-tca-linter`, rename it to `.my-tca-linter.yml`, or keep the old name and pass it explicitly with `--config .swift-ast-lint.yml`.
 
 ## Requirements
 
